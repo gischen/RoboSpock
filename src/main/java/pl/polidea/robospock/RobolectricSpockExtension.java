@@ -18,8 +18,8 @@ public class RobolectricSpockExtension extends AbstractAnnotationDrivenExtension
 
     @Override
     public void visitSpec(SpecInfo spec) {
-        RobolectricSpockInterceptor interceptor = new RobolectricSpockInterceptor(shadowClasses);
+//        RobolectricSpockInterceptor interceptor = new RobolectricSpockInterceptor(shadowClasses);
 
-        spec.getTopSpec().getInitializerMethod().addInterceptor(interceptor);
+//        spec.getTopSpec().getInitializerMethod().addInterceptor(interceptor);
     }
 }

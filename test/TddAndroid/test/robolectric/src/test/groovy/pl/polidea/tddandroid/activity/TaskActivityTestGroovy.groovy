@@ -1,8 +1,8 @@
 package pl.polidea.tddandroid.activity
 
 import com.google.inject.Inject
-import com.xtremelabs.robolectric.Robolectric
-import com.xtremelabs.robolectric.shadows.ShadowBitmapFactory
+import org.robolectric.Robolectric
+import org.robolectric.shadows.ShadowBitmapFactory
 import pl.polidea.robospock.RoboSpecification
 import pl.polidea.tddandroid.module.TestTaskExecutorModule
 import pl.polidea.tddandroid.web.WebInterface

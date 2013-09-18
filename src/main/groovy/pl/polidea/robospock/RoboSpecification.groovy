@@ -4,7 +4,6 @@ package pl.polidea.robospock;
 import com.google.inject.AbstractModule
 import com.google.inject.Module
 import com.google.inject.util.Modules
-import com.xtremelabs.robolectric.Robolectric
 import org.junit.runner.RunWith
 import roboguice.RoboGuice
 import spock.lang.Specification

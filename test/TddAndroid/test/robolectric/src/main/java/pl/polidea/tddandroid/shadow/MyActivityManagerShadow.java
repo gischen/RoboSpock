@@ -1,7 +1,7 @@
 package pl.polidea.tddandroid.shadow;
 
 import android.app.ActivityManager;
-import com.xtremelabs.robolectric.internal.Implements;
+import org.robolectric.annotation.Implements;
 
 @Implements(ActivityManager.class)
 public class MyActivityManagerShadow {

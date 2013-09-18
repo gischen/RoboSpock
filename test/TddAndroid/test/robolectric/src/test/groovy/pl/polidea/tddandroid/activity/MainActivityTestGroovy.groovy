@@ -3,10 +3,10 @@ package pl.polidea.tddandroid.activity
 import android.app.AlertDialog
 import android.content.DialogInterface
 import com.google.inject.Inject
-import com.xtremelabs.robolectric.Robolectric
-import com.xtremelabs.robolectric.shadows.ShadowAlertDialog
-import com.xtremelabs.robolectric.shadows.ShadowDialog
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
+import org.robolectric.shadows.ShadowAlertDialog
+import org.robolectric.shadows.ShadowDialog
 import pl.polidea.robospock.RoboSpecification
 import pl.polidea.robospock.RoboSputnik
 import pl.polidea.robospock.UseShadows

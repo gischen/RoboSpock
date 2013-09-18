@@ -3,8 +3,8 @@ package pl.polidea.tddandroid.shadow;
 import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.TextView.OnEditorActionListener;
-import com.xtremelabs.robolectric.internal.Implements;
-import com.xtremelabs.robolectric.shadows.ShadowEditText;
+import org.robolectric.annotation.Implements;
+import org.robolectric.shadows.ShadowEditText;
 
 @Implements(EditText.class)
 public class MyShadowEditText extends ShadowEditText {
@@ -16,7 +16,6 @@ public class MyShadowEditText extends ShadowEditText {
         }
     }
 
-    @Override
     public void setOnEditorActionListener(final OnEditorActionListener listener) {
         editorActionListener = listener;
 
