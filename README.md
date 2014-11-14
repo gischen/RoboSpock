@@ -14,3 +14,4 @@ Changelog
 =========
 
 0.4.4 - Robolectric updated to 2.2 and Spock to 0.7
+
