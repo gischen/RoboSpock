@@ -18,6 +18,7 @@ import org.robolectric.util.AnnotationUtil;
 import org.spockframework.runtime.Sputnik;
 import org.spockframework.runtime.model.SpecInfo;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
@@ -29,7 +30,7 @@ import java.util.*;
 
 public class RoboSputnik extends Runner implements Filterable, Sortable {
 
-    private static final MavenCentral MAVEN_CENTRAL = new MavenCentral();
+    private DependencyResolver dependencyResolver;
 
     private static final Map<Class<? extends RoboSputnik>, EnvHolder> envHoldersByTestRunner =
             new HashMap<Class<? extends RoboSputnik>, EnvHolder>();
@@ -150,25 +151,47 @@ public class RoboSputnik extends Runner implements Filterable, Sortable {
             return null;
         }
 
-        boolean propertyAvailable = false;
-        FsFile manifestFile = null;
         String manifestProperty = System.getProperty("android.manifest");
-        if (config.manifest().equals(Config.DEFAULT) && manifestProperty != null) {
+        String resourcesProperty = System.getProperty("android.resources");
+        String assetsProperty = System.getProperty("android.assets");
+
+        FsFile baseDir;
+        FsFile manifestFile;
+        FsFile resDir;
+        FsFile assetsDir;
+
+        boolean defaultManifest = config.manifest().equals(Config.DEFAULT);
+        if (defaultManifest && manifestProperty != null) {
             manifestFile = Fs.fileFromPath(manifestProperty);
-            propertyAvailable = true;
+            baseDir = manifestFile.getParent();
+            resDir = Fs.fileFromPath(resourcesProperty);
+            assetsDir = Fs.fileFromPath(assetsProperty);
         } else {
-            FsFile fsFile = Fs.currentDirectory();
-            String manifestStr = config.manifest().equals(Config.DEFAULT) ? "AndroidManifest.xml" : config.manifest();
-            manifestFile = fsFile.join(manifestStr);
+            manifestFile = getBaseDir().join(defaultManifest ? AndroidManifest.DEFAULT_MANIFEST_NAME : config.manifest());
+            baseDir = manifestFile.getParent();
+            resDir = baseDir.join(config.resourceDir());
+            assetsDir = baseDir.join(AndroidManifest.DEFAULT_ASSETS_FOLDER);
+        }
+
+        List<FsFile> libraryDirs = null;
+        if (config.libraries().length > 0) {
+            libraryDirs = new ArrayList<FsFile>();
+            for (String libraryDirName : config.libraries()) {
+                libraryDirs.add(baseDir.join(libraryDirName));
+            }
         }
 
         synchronized (envHolder) {
             AndroidManifest appManifest;
             appManifest = envHolder.appManifestsByFile.get(manifestFile);
             if (appManifest == null) {
-
                 long startTime = System.currentTimeMillis();
-                appManifest = propertyAvailable ? createAppManifestFromProperty(manifestFile) : createAppManifest(manifestFile);
+                appManifest = createAppManifest(manifestFile, resDir, assetsDir);
+
+                if (libraryDirs != null) {
+                    appManifest.setLibraryDirectories(libraryDirs);
+                }
+
                 if (DocumentLoader.DEBUG_PERF)
                     System.out.println(String.format("%4dms spent in %s", System.currentTimeMillis() - startTime, manifestFile));
 
@@ -178,65 +201,29 @@ public class RoboSputnik extends Runner implements Filterable, Sortable {
         }
     }
 
-    protected AndroidManifest createAppManifest(FsFile manifestFile) {
+    protected FsFile getBaseDir() {
+        return Fs.currentDirectory();
+    }
+
+    protected AndroidManifest createAppManifest(FsFile manifestFile, FsFile resDir, FsFile assetsDir) {
         if (!manifestFile.exists()) {
             System.out.print("WARNING: No manifest file found at " + manifestFile.getPath() + ".");
             System.out.println("Falling back to the Android OS resources only.");
             System.out.println("To remove this warning, annotate your test class with @Config(manifest=Config.NONE).");
             return null;
         }
-
-        FsFile appBaseDir = manifestFile.getParent();
-        return new AndroidManifest(manifestFile, appBaseDir.join("res"), appBaseDir.join("assets"));
-    }
-
-    protected AndroidManifest createAppManifestFromProperty(FsFile manifestFile) {
-        String resProperty = System.getProperty("android.resources");
-        String assetsProperty = System.getProperty("android.assets");
-        AndroidManifest manifest = new AndroidManifest(manifestFile, Fs.fileFromPath(resProperty), Fs.fileFromPath(assetsProperty));
-        String packageProperty = System.getProperty("android.package");
-
-        if (packageProperty != null) {
-            try {
-                setPackageName(manifest, packageProperty);
-            } catch (IllegalArgumentException e) {
-                System.out.println("WARNING: Faild to set package name for " + manifestFile.getPath() + ".");
-            }
-        }
+        AndroidManifest manifest = new AndroidManifest(manifestFile, resDir, assetsDir);
+        String packageName = System.getProperty("android.package");
+        manifest.setPackageName(packageName);
         return manifest;
     }
 
-
-    private void setPackageName(AndroidManifest manifest, String packageName) {
-        Class<AndroidManifest> type = AndroidManifest.class;
-        try {
-            Method setPackageNameMethod = type.getMethod("setPackageName", String.class);
-            setPackageNameMethod.setAccessible(true);
-            setPackageNameMethod.invoke(manifest, packageName);
-            return;
-        } catch (NoSuchMethodException e) {
-            try {
-
-                //Force execute parseAndroidManifest.
-                manifest.getPackageName();
-
-                Field packageNameField = type.getDeclaredField("packageName");
-                packageNameField.setAccessible(true);
-                packageNameField.set(manifest, packageName);
-                return;
-            } catch (Exception fieldError) {
-                throw new IllegalArgumentException(fieldError);
-            }
-        } catch (Exception methodError) {
-            throw new IllegalArgumentException(methodError);
-        }
-    }
 
     private SdkEnvironment getEnvironment(final AndroidManifest appManifest, final Config config) {
         final SdkConfig sdkConfig = pickSdkVersion(appManifest, config);
 
         // keep the most recently-used SdkEnvironment strongly reachable to prevent thrashing in low-memory situations.
-        if (getClass().equals(lastTestRunnerClass) && sdkConfig.equals(sdkConfig)) {
+        if (getClass().equals(lastTestRunnerClass) && sdkConfig.equals(lastSdkConfig)) {
             return lastSdkEnvironment;
         }
 
@@ -259,35 +246,33 @@ public class RoboSputnik extends Runner implements Filterable, Sortable {
     }
 
     protected ClassLoader createRobolectricClassLoader(Setup setup, SdkConfig sdkConfig) {
-        URL[] urls = MAVEN_CENTRAL.getLocalArtifactUrls(
-                null,
-                sdkConfig.getSdkClasspathDependencies());
-
+        URL[] urls = getJarResolver().getLocalArtifactUrls(sdkConfig.getSdkClasspathDependencies());
         return new AsmInstrumentingClassLoader(setup, urls);
     }
 
-    public Setup createSetup() {
-        return new Setup() {
-            @Override
-            public boolean shouldAcquire(String name) {
 
-                List<String> prefixes = Arrays.asList(
-                        MavenCentral.class.getName(),
-                        "org.junit",
-                        ShadowMap.class.getName()
-                );
+    protected DependencyResolver getJarResolver() {
+        if (dependencyResolver == null) {
+            if (Boolean.getBoolean("robolectric.offline")) {
+                String dependencyDir = System.getProperty("robolectric.dependency.dir", ".");
+                dependencyResolver = new LocalDependencyResolver(new File(dependencyDir));
+            } else {
+                File cacheDir = new File(new File(System.getProperty("java.io.tmpdir")), "robolectric");
+                cacheDir.mkdir();
 
-                if(name != null) {
-                    for(String prefix : prefixes) {
-                        if (name.startsWith(prefix)) {
-                            return false;
-                        }
-                    }
+                if (cacheDir.exists()) {
+                    dependencyResolver = new RoboSpockCachedDepedencyResolver(new MavenDependencyResolver(), cacheDir, 60 * 60 * 24 * 1000);
+                } else {
+                    dependencyResolver = new MavenDependencyResolver();
                 }
-
-                return super.shouldAcquire(name);
             }
-        };
+        }
+
+        return dependencyResolver;
+    }
+
+    public Setup createSetup() {
+        return new Setup();
     }
 
     protected SdkConfig pickSdkVersion(AndroidManifest appManifest, Config config) {

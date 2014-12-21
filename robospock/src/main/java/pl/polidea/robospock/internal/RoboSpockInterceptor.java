@@ -8,23 +8,22 @@ import org.robolectric.bytecode.ClassHandler;
 import org.robolectric.bytecode.RobolectricInternals;
 import org.robolectric.bytecode.ShadowMap;
 import org.robolectric.bytecode.ShadowWrangler;
+import org.robolectric.internal.ParallelUniverse;
 import org.robolectric.internal.ParallelUniverseInterface;
 import org.robolectric.res.ResourceLoader;
 import org.spockframework.runtime.extension.AbstractMethodInterceptor;
 import org.spockframework.runtime.extension.IMethodInvocation;
 import org.spockframework.runtime.model.SpecInfo;
 
+import java.io.File;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.HashMap;
 import java.util.Map;
 
-import static org.fest.reflect.core.Reflection.staticField;
-
 public class RoboSpockInterceptor extends AbstractMethodInterceptor {
-
-    private static final MavenCentral MAVEN_CENTRAL = new MavenCentral();
 
     private static ShadowMap mainShadowMap;
     private TestLifecycle<Application> testLifecycle;
@@ -33,6 +32,7 @@ public class RoboSpockInterceptor extends AbstractMethodInterceptor {
     private final SdkEnvironment sdkEnvironment;
     private final Config config;
     private final AndroidManifest appManifest;
+    private DependencyResolver dependencyResolver;
 
     public RoboSpockInterceptor(
             SpecInfo specInfo, SdkEnvironment sdkEnvironment, Config config, AndroidManifest appManifest) {
@@ -47,23 +47,27 @@ public class RoboSpockInterceptor extends AbstractMethodInterceptor {
 
     @Override
     public void interceptSpecExecution(IMethodInvocation invocation) throws Throwable {
-
         configureShadows(sdkEnvironment, config);
 
         ParallelUniverseInterface parallelUniverseInterface = getHooksInterface(sdkEnvironment);
         try {
             assureTestLifecycle(sdkEnvironment);
 
-            parallelUniverseInterface.resetStaticState();
+            parallelUniverseInterface.resetStaticState(config);
             parallelUniverseInterface.setSdkConfig(sdkEnvironment.getSdkConfig());
 
             boolean strictI18n = determineI18nStrictState();
 
             int sdkVersion = pickReportedSdkVersion(config, appManifest);
             Class<?> versionClass = sdkEnvironment.bootstrappedClass(Build.VERSION.class);
-            staticField("SDK_INT").ofType(int.class).in(versionClass).set(sdkVersion);
+            Field sdk_int = versionClass.getDeclaredField("SDK_INT");
+            sdk_int.setAccessible(true);
+            Field modifiers = Field.class.getDeclaredField("modifiers");
+            modifiers.setAccessible(true);
+            modifiers.setInt(sdk_int, sdk_int.getModifiers() & ~Modifier.FINAL);
+            sdk_int.setInt(null, sdkVersion);
 
-            ResourceLoader systemResourceLoader = sdkEnvironment.getSystemResourceLoader(MAVEN_CENTRAL, null);
+            ResourceLoader systemResourceLoader = sdkEnvironment.getSystemResourceLoader(getJarResolver(), null);
             setUpApplicationState(null, parallelUniverseInterface, strictI18n, systemResourceLoader, appManifest, config);
         } catch (Exception e) {
             e.printStackTrace();
@@ -76,11 +80,39 @@ public class RoboSpockInterceptor extends AbstractMethodInterceptor {
         setupConstants(withConstantAnnos);
 
         try {
-            invocation.proceed();
+            if (withConstantAnnos.isEmpty()) {
+                invocation.proceed();
+            } else {
+                synchronized (this) {
+                    setupConstants(withConstantAnnos);
+                    invocation.proceed();
+                    setupConstants(withConstantAnnos);
+                }
+            }
         } finally {
-            parallelUniverseInterface.resetStaticState();
+            parallelUniverseInterface.tearDownApplication();
         }
 
+    }
+
+    protected DependencyResolver getJarResolver() {
+        if (dependencyResolver == null) {
+            if (Boolean.getBoolean("robolectric.offline")) {
+                String dependencyDir = System.getProperty("robolectric.dependency.dir", ".");
+                dependencyResolver = new LocalDependencyResolver(new File(dependencyDir));
+            } else {
+                File cacheDir = new File(new File(System.getProperty("java.io.tmpdir")), "robolectric");
+                cacheDir.mkdir();
+
+                if (cacheDir.exists()) {
+                    dependencyResolver = new RoboSpockCachedDepedencyResolver(new MavenDependencyResolver(), cacheDir, 60 * 60 * 24 * 1000);
+                } else {
+                    dependencyResolver = new MavenDependencyResolver();
+                }
+            }
+        }
+
+        return dependencyResolver;
     }
 
     private void setupConstants(Map<Field, Object> constants) {
